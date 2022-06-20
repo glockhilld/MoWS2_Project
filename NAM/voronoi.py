@@ -1,3 +1,4 @@
+from bdb import effective
 from sre_parse import expand_template
 from turtle import width
 import numpy as np
@@ -277,7 +278,8 @@ def Slenderness(regions, vertices, params=None,):
             out_.append(para[2]/para[3])
         return out_
 
-def ellipse_map(clusters, extent=None, points_on=None, slenderness_on=None, **kwargs):
+def ellipse_map(clusters, extent=None, points_on=None,
+                slenderness_on=None, **kwargs):
     """
     draw a map of clusters using fitted ellipses
 
@@ -292,16 +294,19 @@ def ellipse_map(clusters, extent=None, points_on=None, slenderness_on=None, **kw
     centroid = clusters.centroids
     ellipse_para = []
     for i, coord in clusters.clusters_coordinates.items():
-        x0, y0, ap, bp, e, phi = cart_to_pol(fit_ellipse(coord[:,0], coord[:,1]))
+        x0, y0, ap, bp, e, phi = cart_to_pol(fit_ellipse(coord[:,0], 
+                                 coord[:,1]))
         if slenderness_on == True: color = ap/bp
         else:color = len(coord)
         xy = np.array([x0, y0])
         width = ap * 2
         height = bp * 2 
         angle = np.degrees(phi)
-        para = {'xy':xy, 'width':width, 'height':height, 'angle': angle, 'c': color}
+        para = {'xy':xy, 'width':width, 'height':height,
+               'angle': angle, 'c': color}
         ellipse_para.append(para)
-    ellipses = [Ellipse(j['xy'], j['width'] , j['height'] , j['angle'], ) for j in ellipse_para]
+    ellipses = [Ellipse(j['xy'], j['width'] , j['height'] , j['angle'],) 
+               for j in ellipse_para]
     fig, ax = plt.subplots(dpi=300, **kwargs)
     ax.plot(centroid[:,0], centroid[:,1], '*', c='r')
     for k in ellipses:
@@ -319,14 +324,138 @@ def slenderness_calc(cluster_coordinates, ellipse_paras=False):
         hull = ConvexHull(coords)
     else:print('dimension wrong')
     vertices = coords[hull.vertices]
-    x0, y0, ap, bp, e, phi = cart_to_pol(fit_ellipse(vertices[:, 0], vertices[:, 1]))
+    x0, y0, ap, bp, e, phi = cart_to_pol(fit_ellipse(vertices[:, 0], 
+                             vertices[:, 1]))
     slenderness = ap / bp
     if ellipse_paras == False: return slenderness
     else:
         return x0, y0, ap, bp, e, phi, slenderness
 
 
-     
+def slender_voronoi_plot(image, clusters, regions, vertices,
+                         centroids, cmap='gray', peaks=None, ax=None, alpha=.8):
+    import matplotlib
+    import matplotlib.cm as cm
+    from skimage.measure import EllipseModel
+
+    points_augment = clusters.slenderness_points
+    slenderness = []
+    effectivenum = 0
+    for region in regions:
+        ellipse = EllipseModel()
+        polygon = vertices[region]
+        center_v = np.mean(polygon, axis=0).reshape((1, 2))
+        keys = np.array([i for i in points_augment.keys()])
+        center = np.tile(center_v, (len(keys), 1))
+        pos = np.argmin(np.sum((keys-center)**2, axis=1))
+        key = tuple(np.round(keys[pos], decimals=3))
+        t1 = points_augment[key]
+        poly_augmented = np.concatenate((polygon, points_augment[key]), axis=0)
+        xx = [x for x in poly_augmented.ravel()]
+        if np.all(np.array(xx) > 0) and np.all(np.array(xx) < 1024):
+            success = ellipse.estimate(poly_augmented)
+            coeffs = ellipse.params
+            a = coeffs[2] / coeffs[3]
+            b = coeffs[3] / coeffs[2]
+            if np.all(coeffs):
+                if a > b:
+                    slender = a
+                    effectivenum += 1
+                else:
+                    slender = b
+                    effectivenum += 1
+            else:
+                slender = 0
+        else:
+            slender = 0
+        slenderness.append(slender)
+
+    norm = matplotlib.colors.Normalize(
+        vmin=min(slenderness), vmax=max(slenderness), clip=True)
+    mapper = cm.ScalarMappable(norm=norm, cmap=cmap)
+
+    if peaks is not None:
+        centroids = peaks
+
+    if ax == None:
+        fig, ax = plt.subplots()
+        for region, color in zip(regions, slenderness):
+            polygon = vertices[region]
+            ax.fill(*zip(*polygon), c=mapper.to_rgba(color),
+                    alpha=alpha)
+        ax.plot(centroids[:, 0], centroids[:, 1], 'o', ms=.5, mec='m', mfc='g')
+        ax.imshow(image.T, cmap='gray')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlim(0, 1024)
+        ax.set_ylim(0, 1024)
+        ax.set_aspect(1)
+        fig.colorbar(mapper, ax=ax)
+
+    else:
+        for region, color in zip(regions, slenderness):
+            polygon = vertices[region]
+            ax.fill(*zip(*polygon), c=mapper.to_rgba(color),
+                    alpha=alpha)
+        ax.plot(centroids[:, 0], centroids[:, 1], 'o', ms=.5, mec='m', mfc='g')
+        ax.imshow(image.T, cmap='gray')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlim(0, 1024)
+        ax.set_ylim(0, 1024)
+        ax.set_aspect(1)
+        plt.colorbar(mapper, ax=ax)
+
+
+def portion_slenderness(regions, vertices, slenderness, threshold=1.5):
+    total_area = 0.
+    for region in regions:
+        polygon = vertices[region]
+        total_area += PolyArea(polygon)
+
+    effective_area = 0.
+    for region, s_val in zip(regions, slenderness):
+        polygon = vertices[region]
+        if s_val > threshold:
+            effective_area += PolyArea(polygon)
+    
+    return effective_area / total_area
+        
+
+def modified_slenderness_producer(regions, vertices, clusters):
+    from skimage.measure import EllipseModel
+    points_augment = clusters.slenderness_points
+    slenderness = []
+    effectivenum = 0
+    for region in regions:
+        ellipse = EllipseModel()
+        polygon = vertices[region]
+        center_v = np.mean(polygon, axis=0).reshape((1, 2))
+        keys = np.array([i for i in points_augment.keys()])
+        center = np.tile(center_v, (len(keys), 1))
+        pos = np.argmin(np.sum((keys-center)**2, axis=1))
+        key = tuple(np.round(keys[pos], decimals=3))
+        poly_augmented = np.concatenate((polygon, points_augment[key]), axis=0)
+        xx = [x for x in poly_augmented.ravel()]
+        if np.all(np.array(xx) > 0) and np.all(np.array(xx) < 1024):
+            success = ellipse.estimate(poly_augmented)
+            coeffs = ellipse.params
+            a = coeffs[2] / coeffs[3]
+            b = coeffs[3] / coeffs[2]
+            if np.all(coeffs):
+                if a > b:
+                    slender = a
+                    effectivenum += 1
+                else:
+                    slender = b
+                    effectivenum += 1
+            else:
+                slender = 0
+        else:
+            slender = 0
+        slenderness.append(slender)
+    return slenderness
+    
 
 
 

@@ -1,3 +1,6 @@
+from matplotlib import pyplot as plt
+
+
 def FilePath(): #choose Files with file explorer pop up and return num of files and paths
     import tkinter as tk
     from tkinter import filedialog
@@ -30,8 +33,20 @@ def DMReader(filepaths):
     return dataset, pixelSizes
 
 
-def hpFunction():
-    f = hp.File('testFilter1.hdf5', 'w')
-    dset = f.create_dataset('bkgs', data=img_sbkg)
-    f['guassian_filetered']=filtered2
-    f.close()
+def plot_labeled_image(image, centroids, cmap='gray', peaks=None, ax=None, alpha=.8, extent=[(0, 1024), (0, 1024)]):
+    if peaks is not None:
+        centroids = peaks
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    ax.plot(centroids[:, 0], centroids[:, 1], 'o',
+            ms=.5, mec='m', mfc='g', alpha=alpha)
+    ax.imshow(image.T, cmap=cmap)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlim(extent[0])
+    ax.set_ylim(extent[1])
+    ax.set_aspect(1)
+ 
+    
+
